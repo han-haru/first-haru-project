@@ -6,7 +6,10 @@ ros2 topic echo /odom
 ros2 topic echo /imu_plugin/out
 
 
-launch file: rsp.launch.py, launch_robot.launch.py
+launch file: 
+rsp.launch.py, 
+launch_robot.launch.py
+
 descirption: 
   gazebo_control.xacro: differential driver controller and imu_plugin imported,
   inertial_macros.xacro: each inertials of link
