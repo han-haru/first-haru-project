@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-
+from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
 
 
@@ -19,6 +19,33 @@ def generate_launch_description():
     # 시뮬레이션 시간 사용 설정
     
     package_name = 'mobile_test'
+
+    """
+    pkg_gazebo_ros = get_package_share_directory('gazebo_ros')
+
+
+    # Include World
+    world = os.path.join(
+        get_package_share_directory('mobile_test'),
+        'worlds',
+        'empty.word'
+    )    
+
+    gzserver_cmd = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')
+        ),
+        launch_arguments={'world': world}.items()
+    )
+
+    gzclient_cmd = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_gazebo_ros, 'launch', 'gzclient.launch.py')
+        ),
+        launch_arguments={'world': world}.items()
+    )
+    """
+    
 
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(
@@ -43,11 +70,27 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
         )
     
+    # Print the sensor data node from mobile_test pkg
+    test_controller_0 = Node(
+        package='mobile_test',
+        executable='test_controller_0',
+        name='test_controller_0',
+        output='screen',
+        parameters=[{'use_sim_time': True}],
+    )
+
+
+    
     # Launch them all!
     return LaunchDescription(
         [
             rsp,
             gazebo,
             spawn_entity,
+            test_controller_0,
+            ExecuteProcess(
+            cmd=['ros2', 'topic', 'echo', '/cmd_vel'],
+            output='screen'
+        )
         ]
     )
