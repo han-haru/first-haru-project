@@ -24,6 +24,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'sensor_subscriber = mobile_test.sensor_subscriber:main',
+            'test_controller_0 = mobile_test.test_controller_0:main',
+            'test_controller_1 = mobile_test.test_controller_1:main',
+
         ],
     },
 )
