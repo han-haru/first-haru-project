@@ -65,7 +65,6 @@ class SensorFusionNode(Node):
         self.odom_ori = None
 
         self.state = 'moving'
-        self.duration = "uncompleted"
         self.target_position = np.array([1., 0., 0.])
         self.target_orientation = 0.0
 
@@ -124,7 +123,7 @@ class SensorFusionNode(Node):
             if np.linalg.norm(position_error[:2]) < 0.1:
                 self.state = 'rotating'
                 self.get_logger().info('phase 1')
-                self.duration = 'uncompleted'
+         
             else:
                
                 cmd_vel.linear.x = 0.35
