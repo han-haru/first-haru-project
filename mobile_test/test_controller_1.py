@@ -126,7 +126,7 @@ class SensorFusionNode(Node):
                 self.get_logger().info('phase 1')
                 self.duration = 'uncompleted'
             else:
-                # 수정된 부분
+               
                 cmd_vel.linear.x = 0.35
                 cmd_vel.angular.z = 0.6 * orientation_error
                 self.get_logger().info(f'fusion: {self.fusion.orientation[2]}')
