@@ -1,6 +1,6 @@
-pkg name = "mobile_test"
+***pkg name = "mobile_test"***
 
-command : 
+***command :***
 
 ros2 launch mobile_test launch_robot.launch.py
 
@@ -10,13 +10,13 @@ ros2 topic echo /imu_plugin/out
 
 
 
-launch file: 
+***launch file:*** 
 
 rsp.launch.py, 
 
 launch_robot.launch.py
 
-descirption: 
+***descirption:*** 
 
   gazebo_control.xacro: differential driver controller and imu_plugin imported,
   
