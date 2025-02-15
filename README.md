@@ -1,4 +1,5 @@
 pkg name = "mobile_test"
+
 command : 
 ros2 launch mobile_test launch_robot.launch.py
 ros2 topic echo /odom
