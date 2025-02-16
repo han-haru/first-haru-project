@@ -139,6 +139,7 @@ class SensorFusionNode(Node):
         # phase 4: rotating > moving
         # phase 5: 생략 가능, ori 오차 더 작게 설정
         # phase 6: 목표 달성 다음 목표 업데이트
+        # phase 7: ori 오차 줄이는 과정
         if self.state == 'moving':
             if np.linalg.norm(position_error[:2]) < 0.1:
                 self.state = 'rotating'
