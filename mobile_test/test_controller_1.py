@@ -16,6 +16,8 @@ class SensorFusion:
         self.R = np.eye(6) * 0.7  # 측정 노이즈 공분산
 
     def predict(self, accel, gyro, dt):
+        # imu 센서 이용
+        # 퓨전하려면 활용해야 함, 현재 활용x
         # 간단한 운동 모델을 사용한 예측
         self.position += self.velocity * dt + 0.5 * accel * dt**2
         self.velocity += accel * dt
@@ -49,12 +51,13 @@ class SensorFusion:
 
         
 class SensorFusionNode(Node):
-    # robot controller
-
+    # robot controller 
+    # cmd_vel로 인풋 -> 조건별 분기로 사각 궤적
     # 클래스 변수로 node 안에서 반복시 초기화되지 않도록
     count = 1
     time = 0.
     change = 'go'
+
     def __init__(self):
         super().__init__('sensor_fusion_node')
         self.imu_sub = self.create_subscription(Imu, '/imu_plugin/out', self.imu_callback, 10)
@@ -71,7 +74,7 @@ class SensorFusionNode(Node):
         self.odom_ori = None
 
 
-        # robot's state & goal
+        # robot's initial state & goal
         self.state = 'moving'
         self.target_position = np.array([1., 0., 0.])
         self.target_orientation = 0.0
@@ -109,7 +112,7 @@ class SensorFusionNode(Node):
             self.get_logger().warn('Waiting for sensor data...')
             return
 
-
+        # predict를 통해 센서 퓨전시 활용할 dt
         current_time = self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9
         dt = current_time - self.last_time
         self.last_time = current_time
@@ -130,6 +133,12 @@ class SensorFusionNode(Node):
         cmd_vel = Twist()
 
         # Move & Rotation control
+        # phase 1: moving > rotating
+        # phase 2: moving
+        # phase 3: 각도 error 작을 때
+        # phase 4: rotating > moving
+        # phase 5: 생략 가능, ori 오차 더 작게 설정
+        # phase 6: 목표 달성 다음 목표 업데이트
         if self.state == 'moving':
             if np.linalg.norm(position_error[:2]) < 0.1:
                 self.state = 'rotating'
@@ -147,7 +156,7 @@ class SensorFusionNode(Node):
             if abs(orientation_error) < 0.1:
                 self.get_logger().info('rot phase 3')
                 if SensorFusionNode.change == 'stop':
-                    cmd_vel.angular.z = 0.3 * orientation_error
+                   
                     self.get_logger().info('rot phase 4')
                     #if abs(orientation_error) < 0.02: # 해당 부분은 에러 허용치를 낮추는 라인이라 굳이 필요 x
                     cmd_vel.angular.z = 0.0
