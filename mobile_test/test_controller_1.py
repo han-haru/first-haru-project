@@ -13,7 +13,7 @@ class SensorFusion:
         self.orientation = np.zeros(3)
         self.P = np.eye(9)  # 상태 공분산 행렬
         self.Q = np.eye(9) * 0.1  # 프로세스 노이즈 공분산
-        self.R = np.eye(6) * 0.1  # 측정 노이즈 공분산
+        self.R = np.eye(6) * 0.7  # 측정 노이즈 공분산
 
     def predict(self, accel, gyro, dt):
         # 간단한 운동 모델을 사용한 예측
@@ -29,6 +29,8 @@ class SensorFusion:
         self.P = F @ self.P @ F.T + self.Q
 
     def update(self, odom_pos, odom_ori):
+        # odom data를 활용한 state 업데이트
+
         H = np.zeros((6, 9))
         H[0:3, 0:3] = np.eye(3)  # 위치에 대한 측정 모델
         H[3:6, 6:9] = np.eye(3)  # 방향에 대한 측정 모델
@@ -47,6 +49,9 @@ class SensorFusion:
 
         
 class SensorFusionNode(Node):
+    # robot controller
+
+    # 클래스 변수로 node 안에서 반복시 초기화되지 않도록
     count = 1
     time = 0.
     change = 'go'
@@ -59,13 +64,15 @@ class SensorFusionNode(Node):
         self.fusion = SensorFusion()
         self.last_time = self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9
 
+        # 센서 데이터 초기화
         self.accel = None
         self.gyro = None
         self.odom_pos = None
         self.odom_ori = None
 
+
+        # robot's state & goal
         self.state = 'moving'
-        self.duration = "uncompleted"
         self.target_position = np.array([1., 0., 0.])
         self.target_orientation = 0.0
 
@@ -77,10 +84,10 @@ class SensorFusionNode(Node):
     def odom_callback(self, msg):
         self.odom_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
         _, _, yaw = self.quaternion_to_euler(msg.pose.pose.orientation)
-        self.odom_ori = np.array([0, 0, yaw])  # 간단히 yaw만 사용
+        self.odom_ori = np.array([0, 0, yaw])  # yaw만 사용
 
     def quaternion_to_euler(self, q):
-        # 기존 quaternion_to_euler 함수 사용
+        # quaternion_to_euler 함수 사용
         t0 = 2. * (q.w * q.x + q.y * q.z)
         t1 = 1. - 2. * (q.x * q.x + q.y + q.y)
         roll = math.atan2(t0,t1)
@@ -97,6 +104,7 @@ class SensorFusionNode(Node):
         return roll, pitch, yaw
 
     def update(self):
+        # robot square trajectory controller 
         if self.accel is None or self.gyro is None or self.odom_pos is None or self.odom_ori is None:
             self.get_logger().warn('Waiting for sensor data...')
             return
@@ -109,22 +117,24 @@ class SensorFusionNode(Node):
         self.fusion.predict(self.accel, self.gyro, dt)
         self.fusion.update(self.odom_pos, self.odom_ori)
 
+
+        # error of directions and positions
         position_error = self.target_position - self.fusion.position
         # orientation_error = self.target_orientation - self.fusion.orientation[2]  # Assuming yaw is the last element
+        # 2개의 라인 코드가 같은 결과를 보이는 것 같지만 atan2를 쓰면 -pi ~ pi까지 정규화를 해준다.
         orientation_error = math.atan2(math.sin(self.target_orientation - self.fusion.orientation[2]),
                                math.cos(self.target_orientation - self.fusion.orientation[2]))
-
-
         self.get_logger().info(f'position_error: {position_error}')
         self.get_logger().info(f'oritentation: {orientation_error}')
 
         cmd_vel = Twist()
 
+        # Move & Rotation control
         if self.state == 'moving':
             if np.linalg.norm(position_error[:2]) < 0.1:
                 self.state = 'rotating'
                 self.get_logger().info('phase 1')
-                self.duration = 'uncompleted'
+
             else:
                 # 수정된 부분
                 cmd_vel.linear.x = 0.35
@@ -139,11 +149,11 @@ class SensorFusionNode(Node):
                 if SensorFusionNode.change == 'stop':
                     cmd_vel.angular.z = 0.3 * orientation_error
                     self.get_logger().info('rot phase 4')
-                    if abs(orientation_error) < 0.02:
-                        cmd_vel.angular.z = 0.0
-                        self.state = 'moving'
-                        self.get_logger().info('rot phase 5')
-                        SensorFusionNode.change = 'go'
+                    #if abs(orientation_error) < 0.02: # 해당 부분은 에러 허용치를 낮추는 라인이라 굳이 필요 x
+                    cmd_vel.angular.z = 0.0
+                    self.state = 'moving'
+                    self.get_logger().info('rot phase 5')
+                    SensorFusionNode.change = 'go'
                 else:
                     SensorFusionNode.count += 1
                     self.update_target_position()
@@ -158,15 +168,13 @@ class SensorFusionNode(Node):
                 self.get_logger().info('rot phase 7')   
                 
         
-
-        
-        
-                
+  
         self.cmd_vel_pub.publish(cmd_vel)
         self.get_logger().info(f'Publishing cmd_vel: linear.x={cmd_vel.linear.x}, angular.z={cmd_vel.angular.z}')
 
 
     def update_target_position(self):
+        # 4 Case for square trajectory
         if self.count % 4 == 1:
             self.target_position = np.array([1., 0., 0.])
             self.target_orientation = - 0.01
