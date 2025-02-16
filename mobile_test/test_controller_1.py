@@ -13,7 +13,7 @@ class SensorFusion:
         self.orientation = np.zeros(3)
         self.P = np.eye(9)  # 상태 공분산 행렬
         self.Q = np.eye(9) * 0.1  # 프로세스 노이즈 공분산
-        self.R = np.eye(6) * 0.7  # 측정 노이즈 공분산
+        self.R = np.eye(6) * 0.7  # 측정 노이즈 공분산, 노이즈 값 크게 잡고 테스트 진행
 
     def predict(self, accel, gyro, dt):
         # imu 센서 이용
