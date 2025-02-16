@@ -134,9 +134,9 @@ class SensorFusionNode(Node):
             if np.linalg.norm(position_error[:2]) < 0.1:
                 self.state = 'rotating'
                 self.get_logger().info('phase 1')
-
+                
             else:
-                # 수정된 부분
+               
                 cmd_vel.linear.x = 0.35
                 cmd_vel.angular.z = 0.6 * orientation_error
                 self.get_logger().info(f'fusion: {self.fusion.orientation[2]}')
