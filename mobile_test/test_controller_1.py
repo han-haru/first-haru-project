@@ -160,9 +160,9 @@ class SensorFusionNode(Node):
                    
                     self.get_logger().info('rot phase 4')
                     #if abs(orientation_error) < 0.02: # 해당 부분은 에러 허용치를 낮추는 라인이라 굳이 필요 x
+                     #self.get_logger().info('rot phase 5')
                     cmd_vel.angular.z = 0.0
                     self.state = 'moving'
-                    #self.get_logger().info('rot phase 5')
                     SensorFusionNode.change = 'go'
                 else:
                     SensorFusionNode.count += 1
