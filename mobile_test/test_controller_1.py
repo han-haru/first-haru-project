@@ -13,17 +13,20 @@ class SensorFusion:
         self.orientation = np.zeros(3)
         self.P = np.eye(9)  # 상태 공분산 행렬
         self.Q = np.eye(9) * 0.1  # 프로세스 노이즈 공분산
-        self.R = np.eye(6) * 0.7  # 측정 노이즈 공분산, 노이즈 값 크게 잡고 테스트 진행
+        self.R = np.eye(6) * 0.1  # 측정 노이즈 공분산, 값이 크면 측정값 불신, 작으면 과신
+        self.imu_data = []
+        self.odom_data = []
 
     def predict(self, accel, gyro, dt):
-        # imu 센서 이용
-        # 퓨전하려면 활용해야 함, 현재 활용x
         # 간단한 운동 모델을 사용한 예측
+        # x(t|t-1), P(t|t-1)
         self.position += self.velocity * dt + 0.5 * accel * dt**2
         self.velocity += accel * dt
         self.orientation += gyro * dt
 
         # 자코비안 행렬
+        # 바퀴의 회전 속도를 로봇의 선속도와 각속도로 변환할 때 사용된다.
+        # 만약 역기구학 사용하면, 목표 위치에 가기 위한 바퀴 회전 속도를 계산할 때도 사용가능하다.
         F = np.eye(9)
         F[0:3, 3:6] = np.eye(3) * dt
         
@@ -32,37 +35,73 @@ class SensorFusion:
 
     def update(self, odom_pos, odom_ori):
         # odom data를 활용한 state 업데이트
-
+        # x(t|t), P(t|t), K(t), H(t), R(t)
+        # 관측 행렬
         H = np.zeros((6, 9))
         H[0:3, 0:3] = np.eye(3)  # 위치에 대한 측정 모델
         H[3:6, 6:9] = np.eye(3)  # 방향에 대한 측정 모델
 
-        z = np.concatenate([odom_pos, odom_ori])
-        y = z - H @ np.concatenate([self.position,np.zeros(3), self.orientation])
+        z = np.concatenate([odom_pos, odom_ori]) # odom 데이터 통합 [odom_pos odom_ori]'
+
+        # 측정 잔차(실제 관측과 예측 모델 사이 차이)
+        # odom 데이터와 관측 모델 사이 오차 관측 모델에서 특정 값 가져온 후 이를 odom data에서 뺌
+        y = z - H @ np.concatenate([self.position, np.zeros(3), self.orientation]) 
 
         S = H @ self.P @ H.T + self.R
-        K = self.P @ H.T @ np.linalg.inv(S)
+        # kalman gain
+        # 예측값과 측정값 사이 가중치 설정, 값이 크면 측정값을 값이 작으면 예측값을 신뢰
+        K = self.P @ H.T @ np.linalg.inv(S) 
 
         state_update = K @ y
         self.position += state_update[0:3]
         self.orientation += state_update[6:9]
 
         self.P = (np.eye(9) - K @ H) @ self.P
+    
+    def collect_data(self, accel, gyro, odom_pos):
+        # collect sensor data for covariance matirx
+        self.imu_data.append(np.concatenate([accel, gyro]))
+        self.odom_data.append(odom_pos)
 
-        
+    def calculate_process_covariance(self):
+        if len(self.imu_data) > 100 :
+            imu_cov = np.cov(np.array(self.imu_data).T)
+            self.Q = imu_cov
+            
+            # 데이터 초기화
+            self.imu_data = []
+            self.odom_data = []
+
+    def calculate_measurement_covariance(self):
+        if  len(self.odom_data) > 100:
+            odom_cov = np.cov(np.array(self.odom_data).T)
+            self.R = odom_cov
+            
+            # 데이터 초기화
+            self.imu_data = []
+            self.odom_data = []
+
 class SensorFusionNode(Node):
-    # robot controller 
-    # cmd_vel로 인풋 -> 조건별 분기로 사각 궤적
+    # robot controller
+
     # 클래스 변수로 node 안에서 반복시 초기화되지 않도록
     count = 1
     time = 0.
     change = 'go'
-
     def __init__(self):
         super().__init__('sensor_fusion_node')
+        '''
+        # 내장 데이터
         self.imu_sub = self.create_subscription(Imu, '/imu_plugin/out', self.imu_callback, 10)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        '''
+        
+        #실제 데이터 받을 때
+        self.imu_sub = self.create_subscription(Imu, '/imu/data', self.imu_callback, 10)
+        self.odom_sub = self.create_subscription(Odometry, 'motor_topic', self.odom_callback, 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        
 
         self.fusion = SensorFusion()
         self.last_time = self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9
@@ -73,12 +112,13 @@ class SensorFusionNode(Node):
         self.odom_pos = None
         self.odom_ori = None
 
-
-        # robot's initial state & goal
+        # robot's state & goal
         self.state = 'moving'
         self.target_position = np.array([1., 0., 0.])
         self.target_orientation = 0.0
 
+        self.imu_data = []
+        self.odom_data = []
 
     def imu_callback(self, msg):
         self.accel = np.array([msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z])
@@ -88,6 +128,8 @@ class SensorFusionNode(Node):
         self.odom_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
         _, _, yaw = self.quaternion_to_euler(msg.pose.pose.orientation)
         self.odom_ori = np.array([0, 0, yaw])  # yaw만 사용
+
+
 
     def quaternion_to_euler(self, q):
         # quaternion_to_euler 함수 사용
@@ -112,11 +154,17 @@ class SensorFusionNode(Node):
             self.get_logger().warn('Waiting for sensor data...')
             return
 
-        # predict를 통해 센서 퓨전시 활용할 dt
+
         current_time = self.get_clock().now().to_msg().sec + self.get_clock().now().to_msg().nanosec * 1e-9
         dt = current_time - self.last_time
         self.last_time = current_time
 
+        # SensorFusion 클래스 내용받아오기.
+        self.fusion.collect_data(self.accel, self.gyro, self.odom_pos)
+        self.fusion.calculate_process_covariance()
+        self.get_logger().info('Covariance matrix of Process updated')
+        self.fusion.calculate_measurement_covariance()
+        self.get_logger().info('Covariance matrix of Measurement updated')
         self.fusion.predict(self.accel, self.gyro, dt)
         self.fusion.update(self.odom_pos, self.odom_ori)
 
@@ -127,55 +175,48 @@ class SensorFusionNode(Node):
         # 2개의 라인 코드가 같은 결과를 보이는 것 같지만 atan2를 쓰면 -pi ~ pi까지 정규화를 해준다.
         orientation_error = math.atan2(math.sin(self.target_orientation - self.fusion.orientation[2]),
                                math.cos(self.target_orientation - self.fusion.orientation[2]))
-        self.get_logger().info(f'position_error: {position_error}')
-        self.get_logger().info(f'oritentation: {orientation_error}')
+        #self.get_logger().info(f'position_error: {position_error}')
+        #self.get_logger().info(f'oritentation: {orientation_error}')
 
         cmd_vel = Twist()
 
         # Move & Rotation control
-        # phase 1: moving > rotating
-        # phase 2: moving
-        # phase 3: 각도 error 작을 때
-        # phase 4: rotating > moving
-        # phase 5: 생략 가능, ori 오차 더 작게 설정
-        # phase 6: 목표 달성 다음 목표 업데이트
-        # phase 7: ori 오차 줄이는 과정
         if self.state == 'moving':
             if np.linalg.norm(position_error[:2]) < 0.1:
                 self.state = 'rotating'
-                self.get_logger().info('phase 1')
-                
+                #self.get_logger().info('phase 1')
+
             else:
-               
-                cmd_vel.linear.x = 0.35
-                cmd_vel.angular.z = 0.6 * orientation_error
-                self.get_logger().info(f'fusion: {self.fusion.orientation[2]}')
-                self.get_logger().info('phase 2')    
+                # 수정된 부분
+                cmd_vel.linear.x = 0.4 #np.linalg.norm(position_error) # 남은 거리에 따라 속도 조절
+                cmd_vel.angular.z = 0.6 * orientation_error # 남은 각도에 따라 각속도 조절
+                #self.get_logger().info(f'fusion: {self.fusion.orientation[2]}')
+                #self.get_logger().info('phase 2')    
                 
         elif self.state == 'rotating':
             cmd_vel.linear.x = 0.
             if abs(orientation_error) < 0.1:
-                self.get_logger().info('rot phase 3')
+                #self.get_logger().info('rot phase 3')
                 if SensorFusionNode.change == 'stop':
-                   
-                    self.get_logger().info('rot phase 4')
+                    #cmd_vel.angular.z = 0.3 * orientation_error
+                    #self.get_logger().info('rot phase 4')
                     #if abs(orientation_error) < 0.02: # 해당 부분은 에러 허용치를 낮추는 라인이라 굳이 필요 x
-                     #self.get_logger().info('rot phase 5')
                     cmd_vel.angular.z = 0.0
                     self.state = 'moving'
+                    #self.get_logger().info('rot phase 5')
                     SensorFusionNode.change = 'go'
                 else:
                     SensorFusionNode.count += 1
                     self.update_target_position()
                     SensorFusionNode.change = 'stop'
-                    self.get_logger().info(f'rot phase 6: {self.target_position}')
-                    self.get_logger().info(f'rot phase 6: {self.target_orientation}')
+                    #self.get_logger().info(f'rot phase 6: {self.target_position}')
+                    #self.get_logger().info(f'rot phase 6: {self.target_orientation}')
 
                     
 
             else:
                 cmd_vel.angular.z = 0.5 * orientation_error  # Adjust rotation speed as needed   
-                self.get_logger().info('rot phase 7')   
+                #self.get_logger().info('rot phase 7')   
                 
         
   
