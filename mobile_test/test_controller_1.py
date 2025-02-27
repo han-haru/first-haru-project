@@ -8,12 +8,12 @@ import numpy as np
 
 class SensorFusion:
     def __init__(self):
-        self.position = np.zeros(3)
+        self.position = np.zeros(2)
         self.velocity = np.zeros(3)
-        self.orientation = np.zeros(3)
-        self.P = np.eye(9)  # 상태 공분산 행렬
-        self.Q = np.eye(9) * 0.1  # 프로세스 노이즈 공분산
-        self.R = np.eye(6) * 0.1  # 측정 노이즈 공분산, 값이 크면 측정값 불신, 작으면 과신
+        self.orientation = np.zeros(1)
+        self.P = np.eye(6)  # 상태 추정 오차 공분산 행렬
+        self.Q = np.eye(6) * 0.1  # 프로세스 노이즈 공분산
+        self.R = np.eye(3) * 0.1  # 측정 노이즈 공분산, 값이 크면 측정값 불신, 작으면 과신
         self.imu_data = []
         self.odom_data = []
 
@@ -27,7 +27,7 @@ class SensorFusion:
         # 자코비안 행렬
         # 바퀴의 회전 속도를 로봇의 선속도와 각속도로 변환할 때 사용된다.
         # 만약 역기구학 사용하면, 목표 위치에 가기 위한 바퀴 회전 속도를 계산할 때도 사용가능하다.
-        F = np.eye(9)
+        F = np.eye(6)
         F[0:3, 3:6] = np.eye(3) * dt
         
         # 공분산 업데이트
@@ -37,31 +37,32 @@ class SensorFusion:
         # odom data를 활용한 state 업데이트
         # x(t|t), P(t|t), K(t), H(t), R(t)
         # 관측 행렬
-        H = np.zeros((6, 9))
-        H[0:3, 0:3] = np.eye(3)  # 위치에 대한 측정 모델
-        H[3:6, 6:9] = np.eye(3)  # 방향에 대한 측정 모델
+        H = np.zeros((3, 6))
+        H[0:2, 0:2] = np.eye(2)  # 위치에 대한 측정 모델
+        H[2, 2] = np.eye(1)  # 방향에 대한 측정 모델
+        H[0:2, 3:6] = np.eye(3) # 차원 채워주는 역할
 
-        z = np.concatenate([odom_pos, odom_ori]) # odom 데이터 통합 [odom_pos odom_ori]'
+        z = np.concatenate([odom_pos, odom_ori]) # odom 데이터 통합 [odom_pos odom_ori] : 1차원 벡터 (3,)
 
         # 측정 잔차(실제 관측과 예측 모델 사이 차이)
         # odom 데이터와 관측 모델 사이 오차 관측 모델에서 특정 값 가져온 후 이를 odom data에서 뺌
-        y = z - H @ np.concatenate([self.position, np.zeros(3), self.orientation]) 
+        y = z - H @ np.concatenate([self.position, self.orientation ,np.zeros(3)]) # y: (3,), z: (3,), [H:(3,6) @ (6,)]: (3,)
 
-        S = H @ self.P @ H.T + self.R
+        S = H @ self.P @ H.T + self.R # S: (3,3), [H: (3,6), P: (6,6), H.T: (6,3)]: (3,3), R:(3,3)
         # kalman gain
         # 예측값과 측정값 사이 가중치 설정, 값이 크면 측정값을 값이 작으면 예측값을 신뢰
-        K = self.P @ H.T @ np.linalg.inv(S) 
+        K = self.P @ H.T @ np.linalg.inv(S) # K: (6,3), P: (6,6), H.T: (6,3), S: (3,3)
 
-        state_update = K @ y
-        self.position += state_update[0:3]
-        self.orientation += state_update[6:9]
+        state_update = K @ y # [(6,3) @ (3,)]: (6,) = [x,y,yaw,0,0,0]
+        self.position += state_update[0:2]
+        self.orientation += state_update[2]
 
-        self.P = (np.eye(9) - K @ H) @ self.P
+        self.P = (np.eye(6) - K @ H) @ self.P
     
-    def collect_data(self, accel, gyro, odom_pos):
+    def collect_data(self, accel, gyro, odom_pos, odom_ori):
         # collect sensor data for covariance matirx
         self.imu_data.append(np.concatenate([accel, gyro]))
-        self.odom_data.append(odom_pos)
+        self.odom_data.append([odom_pos,odom_ori])
 
     def calculate_process_covariance(self):
         if len(self.imu_data) > 100 :
@@ -114,20 +115,20 @@ class SensorFusionNode(Node):
 
         # robot's state & goal
         self.state = 'moving'
-        self.target_position = np.array([1., 0., 0.])
-        self.target_orientation = 0.0
+        self.target_position = np.array([1., 0.]) # (x, y): (2,)
+        self.target_orientation = 0.0 # (y): (1,)
 
         self.imu_data = []
         self.odom_data = []
 
     def imu_callback(self, msg):
-        self.accel = np.array([msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z])
-        self.gyro = np.array([msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z])
+        self.accel = np.array([msg.linear_acceleration.x, msg.linear_acceleration.y]) # 1차원 벡터 (2,)
+        self.gyro = np.array([msg.angular_velocity.z]) # 1차원 벡터 (1,)
 
     def odom_callback(self, msg):
-        self.odom_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z])
+        self.odom_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y]) # 1차원 벡터 (2,)
         _, _, yaw = self.quaternion_to_euler(msg.pose.pose.orientation)
-        self.odom_ori = np.array([0, 0, yaw])  # yaw만 사용
+        self.odom_ori = np.array([yaw])  # yaw만 사용 1차원 벡터 (1,)
 
 
 
@@ -160,7 +161,7 @@ class SensorFusionNode(Node):
         self.last_time = current_time
 
         # SensorFusion 클래스 내용받아오기.
-        self.fusion.collect_data(self.accel, self.gyro, self.odom_pos)
+        self.fusion.collect_data(self.accel, self.gyro, self.odom_pos, self.odom_ori)
         self.fusion.calculate_process_covariance()
         self.get_logger().info('Covariance matrix of Process updated')
         self.fusion.calculate_measurement_covariance()
@@ -173,8 +174,8 @@ class SensorFusionNode(Node):
         position_error = self.target_position - self.fusion.position
         # orientation_error = self.target_orientation - self.fusion.orientation[2]  # Assuming yaw is the last element
         # 2개의 라인 코드가 같은 결과를 보이는 것 같지만 atan2를 쓰면 -pi ~ pi까지 정규화를 해준다.
-        orientation_error = math.atan2(math.sin(self.target_orientation - self.fusion.orientation[2]),
-                               math.cos(self.target_orientation - self.fusion.orientation[2]))
+        orientation_error = math.atan2(math.sin(self.target_orientation - self.fusion.orientation),
+                               math.cos(self.target_orientation - self.fusion.orientation))
         #self.get_logger().info(f'position_error: {position_error}')
         #self.get_logger().info(f'oritentation: {orientation_error}')
 
@@ -182,7 +183,7 @@ class SensorFusionNode(Node):
 
         # Move & Rotation control
         if self.state == 'moving':
-            if np.linalg.norm(position_error[:2]) < 0.1:
+            if np.linalg.norm(position_error[0:]) < 0.1:
                 self.state = 'rotating'
                 #self.get_logger().info('phase 1')
 
@@ -227,19 +228,19 @@ class SensorFusionNode(Node):
     def update_target_position(self):
         # 4 Case for square trajectory
         if self.count % 4 == 1:
-            self.target_position = np.array([1., 0., 0.])
+            self.target_position = np.array([1., 0.])
             self.target_orientation = - 0.01
             self.get_logger().info('T1')
         elif self.count % 4 == 2:
-            self.target_position = np.array([1., 1., 0.])
+            self.target_position = np.array([1., 1.])
             self.target_orientation = math.pi/2
             self.get_logger().info('T2') 
         elif self.count % 4 == 3:
-            self.target_position = np.array([0., 1., 0.])
+            self.target_position = np.array([0., 1.])
             self.target_orientation = math.pi -0.01  # atan2 는 -pi ~ pi 범위
             self.get_logger().info('T3')
         else:
-            self.target_position = np.array([0.0, 0.0, 0.])
+            self.target_position = np.array([0.0, 0.0])
             self.target_orientation = - math.pi /2
             self.get_logger().info('T4')
                     
@@ -253,7 +254,7 @@ def main(args=None):
             rclpy.spin_once(node)
             node.update()
     except KeyboardInterrupt:
-        pass
+        pass, 0.
     finally:
         node.destroy_node()
         rclpy.shutdown()
