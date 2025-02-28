@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist, Vector3
+from geometry_msgs.msg import Twist
 import math
 import numpy as np
 
@@ -12,10 +12,20 @@ class SensorFusion:
         self.velocity = np.zeros(3)
         self.orientation = np.zeros(1)
         self.P = np.eye(6)  # 상태 추정 오차 공분산 행렬
-        self.Q = np.eye(6) * 0.1  # 프로세스 노이즈 공분산
-        self.R = np.eye(3) * 0.1  # 측정 노이즈 공분산, 값이 크면 측정값 불신, 작으면 과신
-        self.imu_data = []
-        self.odom_data = []
+        self.Q = np.array(
+            [[0.001507,  0.0006,   -0.024654,  0.000188,  0.,        0.000955]
+[ 0.0006,    0.000995, -0.021857,  0.001101,  0.,       -0.00315 ]
+[-0.024654, -0.021857,  0.775711, -0.021959,  0.,        0.103542]
+[ 0.000188,  0.001101, -0.021959,  0.002323,  0.,       -0.003333]
+[ 0.,        0.,        0.,        0.,        0.,        0.      ]
+[ 0.000955, -0.00315,   0.103542, -0.003333,  0.,        0.223185]])  # 프로세스 노이즈 공분산
+        self.R = np.array(
+            [[ 0.001,-0.   ,-0.018],
+[-0.   , 0.   ,-0.002],
+[-0.018,-0.002, 0.814]]
+        )  # 측정 노이즈 공분산, 값이 크면 측정값 불신, 작으면 과신
+        # self.imu_data = []
+        # self.odom_data = []
 
     def predict(self, accel, gyro, dt):
         # 간단한 운동 모델을 사용한 예측
@@ -59,28 +69,28 @@ class SensorFusion:
 
         self.P = (np.eye(6) - K @ H) @ self.P
     
-    def collect_data(self, accel, gyro, odom_pos, odom_ori):
-        # collect sensor data for covariance matirx
-        self.imu_data.append(np.concatenate([accel, gyro]))
-        self.odom_data.append([odom_pos,odom_ori])
+    # def collect_data(self, accel, gyro, odom_pos, odom_ori):
+    #     # collect sensor data for covariance matirx
+    #     self.imu_data.append(np.concatenate([accel, gyro]))
+    #     self.odom_data.append([odom_pos,odom_ori])
 
-    def calculate_process_covariance(self):
-        if len(self.imu_data) > 100 :
-            imu_cov = np.cov(np.array(self.imu_data).T)
-            self.Q = imu_cov
+    # def calculate_process_covariance(self):
+    #     if len(self.imu_data) > 100 :
+    #         imu_cov = np.cov(np.array(self.imu_data).T)
+    #         self.Q = imu_cov
             
-            # 데이터 초기화
-            self.imu_data = []
-            self.odom_data = []
+    #         # 데이터 초기화
+    #         self.imu_data = []
+    #         self.odom_data = []
 
-    def calculate_measurement_covariance(self):
-        if  len(self.odom_data) > 100:
-            odom_cov = np.cov(np.array(self.odom_data).T)
-            self.R = odom_cov
+    # def calculate_measurement_covariance(self):
+    #     if  len(self.odom_data) > 100:
+    #         odom_cov = np.cov(np.array(self.odom_data).T)
+    #         self.R = odom_cov
             
-            # 데이터 초기화
-            self.imu_data = []
-            self.odom_data = []
+    #         # 데이터 초기화
+    #         self.imu_data = []
+    #         self.odom_data = []
 
 class SensorFusionNode(Node):
     # robot controller
@@ -161,11 +171,11 @@ class SensorFusionNode(Node):
         self.last_time = current_time
 
         # SensorFusion 클래스 내용받아오기.
-        self.fusion.collect_data(self.accel, self.gyro, self.odom_pos, self.odom_ori)
-        self.fusion.calculate_process_covariance()
-        self.get_logger().info('Covariance matrix of Process updated')
-        self.fusion.calculate_measurement_covariance()
-        self.get_logger().info('Covariance matrix of Measurement updated')
+        # self.fusion.collect_data(self.accel, self.gyro, self.odom_pos, self.odom_ori)
+        # self.fusion.calculate_process_covariance()
+        # self.get_logger().info('Covariance matrix of Process updated')
+        # self.fusion.calculate_measurement_covariance()
+        # self.get_logger().info('Covariance matrix of Measurement updated')
         self.fusion.predict(self.accel, self.gyro, dt)
         self.fusion.update(self.odom_pos, self.odom_ori)
 
@@ -189,7 +199,7 @@ class SensorFusionNode(Node):
 
             else:
                 # 수정된 부분
-                cmd_vel.linear.x = 0.4 #np.linalg.norm(position_error) # 남은 거리에 따라 속도 조절
+                cmd_vel.linear.x = 0.15 #np.linalg.norm(position_error) # 남은 거리에 따라 속도 조절
                 cmd_vel.angular.z = 0.6 * orientation_error # 남은 각도에 따라 각속도 조절
                 #self.get_logger().info(f'fusion: {self.fusion.orientation[2]}')
                 #self.get_logger().info('phase 2')    
